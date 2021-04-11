@@ -11,15 +11,14 @@ from datetime import datetime
 from logging import Logger, basicConfig, getLogger, INFO
 from os import getenv
 from pathlib import Path
-from subprocess import (DEVNULL, PIPE, STDOUT, CalledProcessError,
-                        TimeoutExpired, call, check_call, check_output, run)
+from subprocess import (DEVNULL, PIPE, STDOUT, CalledProcessError, TimeoutExpired, call, check_call, check_output, run)
 from tempfile import TemporaryDirectory
 from typing import Any, Iterator, List, MutableMapping, Union, Optional
 
 from enum import Enum
 import toml
 
-logger = getLogger(__name__)  # type: Logger
+from problem import Problem, find_problem_dir
 
 CASENAME_LEN_LIMIT = 40
 
@@ -44,13 +43,11 @@ def compile(src: Path, libdir: Path):
         if platform.system() == 'Windows' or 'CYGWIN' in platform.system():
             cxxflags_default += ' -Wl,-stack,0x10000000'  # 256MB
             # cxxflags_default += ' -D__USE_MINGW_ANSI_STDIO' # avoid using MinGW's "unique" stdio, which doesn't recognize %lld
-        if platform.uname(
-        ).system == 'Linux' and 'Microsoft' in platform.uname().release:
+        if platform.uname().system == 'Linux' and 'Microsoft' in platform.uname().release:
             cxxflags_default += ' -fsplit-stack'  # a workaround for the lack of ulimit in Windows Subsystem for Linux
         cxxflags = getenv('CXXFLAGS', cxxflags_default).split()
         cxxflags.extend(['-I', str(libdir / 'common')])
-        check_call([cxx] + cxxflags + ['-o', str(src.with_suffix(''))] +
-                   [str(src)])
+        check_call([cxx] + cxxflags + ['-o', str(src.with_suffix(''))] + [str(src)])
     elif src.suffix == '.in':
         pass
     else:
@@ -62,11 +59,7 @@ def execcmd(src: Path, arg: List[str] = []) -> List[str]:
     # main.cpp -> ['main']
     # example.in -> ['cat', 'example_00.in']
     if src.suffix == '.cpp':
-        cmd = [
-            str(
-                src.with_suffix('' if platform.system() != 'Windows' else
-                                '.exe').resolve())
-        ]
+        cmd = [str(src.with_suffix('' if platform.system() != 'Windows' else '.exe').resolve())]
         cmd.extend(arg)
         return cmd
     elif src.suffix == '.in':
@@ -83,8 +76,7 @@ def check_call_to_file(command: List[str], outpath: Path, *args, **kwargs):
     if platform.uname().system == 'Windows':
         result = run(command, stdout=PIPE, check=True, *args, **kwargs)
         with open(str(outpath), "w", newline='\n') as out_file:
-            out_file.write(
-                result.stdout.decode('utf-8').replace(os.linesep, '\n'))
+            out_file.write(result.stdout.decode('utf-8').replace(os.linesep, '\n'))
     else:
         check_call(command, stdout=open(str(outpath), "w"), *args, **kwargs)
 
@@ -101,10 +93,8 @@ class Problem:
         self.basedir = basedir  # type: Path
         tomlpath = basedir / 'info.toml'
         self.config = toml.load(tomlpath)  # type: MutableMapping[str, Any]
-        self.checker = basedir / self.config.get('checker',
-                                                 'checker.cpp')  # type: Path
-        self.verifier = basedir / self.config.get('verifier',
-                                                  'verifier.cpp')  # type: Path
+        self.checker = basedir / self.config.get('checker', 'checker.cpp')  # type: Path
+        self.verifier = basedir / self.config.get('verifier', 'verifier.cpp')  # type: Path
         self.ignore_warning = False  # type: bool
 
     def warning(self, message: str):
@@ -208,8 +198,7 @@ class Problem:
             for i in range(num):
                 inname = (casename(name, i) + '.in')
                 inpath = indir / inname
-                result = run(execcmd(self.verifier),
-                             stdin=open(str(inpath), 'r'))
+                result = run(execcmd(self.verifier), stdin=open(str(inpath), 'r'))
                 if result.returncode != 0:
                     logger.error('verify failed: {}'.format(inname))
                     exit(1)
@@ -234,23 +223,14 @@ class Problem:
                 infile = indir / (case + '.in')
                 expected = outdir / (case + '.out')
                 start = datetime.now()
-                check_call_to_file(execcmd(soldir / 'correct.cpp'),
-                                   expected,
-                                   stdin=open(str(infile), 'r'))
+                check_call_to_file(execcmd(soldir / 'correct.cpp'), expected, stdin=open(str(infile), 'r'))
                 end = datetime.now()
                 checker_output = bytes()
                 if check:
-                    process = run(execcmd(
-                        checker, [str(infile),
-                                  str(expected),
-                                  str(expected)]),
-                                  stdout=PIPE,
-                                  stderr=STDOUT,
-                                  check=True)
+                    process = run(execcmd(checker, [str(infile), str(expected), str(expected)]), stdout=PIPE, stderr=STDOUT, check=True)
                     checker_output = process.stdout
 
-                logging_result('ANS', start, end,
-                               '{} : {}'.format(case, checker_output))
+                logging_result('ANS', start, end, '{} : {}'.format(case, checker_output))
 
     def is_testcases_already_generated(self) -> bool:
         indir = self.basedir / 'in'
@@ -272,8 +252,7 @@ class Problem:
                 testcases.add(expected)
 
         # Here you should use min, not max. We want ensure that all testcases are newer than all source files.
-        latest_timestamp = min(
-            datetime.fromtimestamp(path.stat().st_mtime) for path in testcases)
+        latest_timestamp = min(datetime.fromtimestamp(path.stat().st_mtime) for path in testcases)
 
         # compare the timestamp with other files (including header files in common/)
         for path in self.list_depending_files():
@@ -289,21 +268,17 @@ class Problem:
 
         checker_timestamp = datetime.fromtimestamp(checker_bin.stat().st_mtime)
         for path in self.list_depending_files():
-            if checker_timestamp < datetime.fromtimestamp(
-                    path.stat().st_mtime):
+            if checker_timestamp < datetime.fromtimestamp(path.stat().st_mtime):
                 return False
         logger.info('The checker is already compiled')
         return True
 
     def list_depending_files(self) -> Iterator[Path]:
         yield Path(__file__)
-        for path in list(self.basedir.glob('**/*')) + list(
-                self.libdir.glob('common/**/*')):
-            if (self.basedir / 'in').exists() and (
-                    self.basedir / 'in').resolve() in path.resolve().parents:
+        for path in list(self.basedir.glob('**/*')) + list(self.libdir.glob('common/**/*')):
+            if (self.basedir / 'in').exists() and (self.basedir / 'in').resolve() in path.resolve().parents:
                 continue
-            if (self.basedir / 'out').exists() and (
-                    self.basedir / 'out').resolve() in path.resolve().parents:
+            if (self.basedir / 'out').exists() and (self.basedir / 'out').resolve() in path.resolve().parents:
                 continue
             if not path.is_file():
                 continue  # ignore directories
@@ -319,15 +294,13 @@ class Problem:
     def problem_version(self) -> str:
         all_hash = hashlib.sha256()
         for path in sorted(self.list_depending_files()):
-            all_hash.update(
-                hashlib.sha256(open(str(path), 'rb').read()).digest())
+            all_hash.update(hashlib.sha256(open(str(path), 'rb').read()).digest())
         return all_hash.hexdigest()
 
     # return "version" of testcase
     def testcase_version(self) -> str:
         all_hash = hashlib.sha256()
-        all_hash.update(
-            hashlib.sha256(open(str(self.checker), 'rb').read()).digest())
+        all_hash.update(hashlib.sha256(open(str(self.checker), 'rb').read()).digest())
         cases = json.load(open(str(self.basedir / 'hash.json'), 'r'))
         for name, sha in sorted(cases.items(), key=lambda x: x[0]):
             all_hash.update(sha.encode('ascii'))
@@ -357,21 +330,13 @@ class Problem:
                 result = ''
                 checker_output = bytes()
                 try:
-                    check_call_to_file(execcmd(src),
-                                       actual,
-                                       stdin=open(str(infile), 'r'),
-                                       timeout=self.config['timelimit'])
+                    check_call_to_file(execcmd(src), actual, stdin=open(str(infile), 'r'), timeout=self.config['timelimit'])
                 except TimeoutExpired:
                     result = 'TLE'
                 except CalledProcessError:
                     result = 'RE'
                 else:
-                    process = run(execcmd(
-                        checker,
-                        [str(infile), str(actual),
-                         str(expected)]),
-                                  stdout=PIPE,
-                                  stderr=STDOUT)
+                    process = run(execcmd(checker, [str(infile), str(actual), str(expected)]), stdout=PIPE, stderr=STDOUT)
                     checker_output = process.stdout
                     if process.returncode:
                         result = 'WA'
@@ -380,9 +345,7 @@ class Problem:
                 end = datetime.now()
 
                 results.add(result)
-                logging_result(
-                    result, start, end,
-                    '{} : {}'.format(case, checker_output.decode('utf-8')))
+                logging_result(result, start, end, '{} : {}'.format(case, checker_output.decode('utf-8')))
 
         if config.get('wrong', False):
             if results == {'AC'}:
@@ -406,8 +369,7 @@ class Problem:
         html = self.gen_html()
         if not html.check_all_samples_used():
             self.warning('all samples are not used')
-        path = (self.basedir / 'task.html') if not htmldir else htmldir / (
-            self.basedir.resolve().name + '.html')
+        path = (self.basedir / 'task.html') if not htmldir else htmldir / (self.basedir.resolve().name + '.html')
         with open(str(path), 'w', encoding='utf-8') as f:
             f.write(html.html)
 
@@ -430,8 +392,7 @@ class Problem:
         actual = self.calc_hashes()
         if expect != actual:
             logger.error('hashes are different')
-            logger.error('your hash: {}'.format(
-                json.dumps(actual, indent=2, sort_keys=True)))
+            logger.error('your hash: {}'.format(json.dumps(actual, indent=2, sort_keys=True)))
             raise RuntimeError("hashes are different")
 
     def write_hashes(self):
@@ -442,18 +403,15 @@ class Problem:
             expect = json.load(open(str(self.basedir / 'hash.json'), 'r'))
             if expect != actual:
                 self.warning('hashes are different, overwrite')
-                self.warning('your hash: {}'.format(
-                    json.dumps(actual, indent=2, sort_keys=True)))
-        json.dump(self.calc_hashes(),
-                  open(str(self.basedir / 'hash.json'), 'w'),
-                  indent=2,
-                  sort_keys=True)
+                self.warning('your hash: {}'.format(json.dumps(actual, indent=2, sort_keys=True)))
+        json.dump(self.calc_hashes(), open(str(self.basedir / 'hash.json'), 'w'), indent=2, sort_keys=True)
 
     class Mode(Enum):
         DEFAULT = 1
         DEV = 2
         TEST = 3
         HTML = 4
+
         def force_generate(self):
             return self == self.DEV or self == self.TEST
 
@@ -525,9 +483,7 @@ def find_problem_dir(rootdir: Path, problem_name: Path) -> Optional[Path]:
     return tomls[0].parent
 
 
-def generate(problem: Problem, force_generate: bool, ignore_warning: bool,
-             rewrite_hash: bool, verify: bool, generate_html: bool,
-             html_dir: Union[Path, None]):
+def generate(problem: Problem, force_generate: bool, ignore_warning: bool, rewrite_hash: bool, verify: bool, generate_html: bool, html_dir: Union[Path, None]):
 
     problem.ignore_warning = ignore_warning
 
@@ -583,32 +539,24 @@ def main(args: List[str]):
         logger.warn('Please install colorlog: pip3 install colorlog')
     else:
         handler = colorlog.StreamHandler()
-        formatter = colorlog.ColoredFormatter(
-            "%(log_color)s%(asctime)s [%(levelname)s] %(message)s",
-            datefmt="%H:%M:%S",
-            log_colors={
-                'DEBUG': 'cyan',
-                'INFO': 'white',
-                'WARNING': 'yellow',
-                'ERROR': 'red',
-                'CRITICAL': 'red,bg_white',
-            })
+        formatter = colorlog.ColoredFormatter("%(log_color)s%(asctime)s [%(levelname)s] %(message)s", datefmt="%H:%M:%S", log_colors={
+            'DEBUG': 'cyan',
+            'INFO': 'white',
+            'WARNING': 'yellow',
+            'ERROR': 'red',
+            'CRITICAL': 'red,bg_white',
+        })
         handler.setFormatter(formatter)
         basicConfig(level=getenv('LOG_LEVEL', 'INFO'), handlers=[handler])
 
     parser = argparse.ArgumentParser(description='Testcase Generator')
     parser.add_argument('toml', nargs='*', help='Toml File')
-    parser.add_argument('-p',
-                        '--problem',
-                        nargs='*',
-                        help='Generate problem',
-                        default=[])
+    parser.add_argument('-p', '--problem', nargs='*', help='Generate problem', default=[])
 
     parser.add_argument('--dev', action='store_true', help='Developer Mode')
     parser.add_argument('--test', action='store_true', help='CI Mode')
     parser.add_argument('--htmldir', help='Generate HTML', default=None)
-    parser.add_argument('--compile-checker',
-                        action='store_true', help='Deprecated: Compile Checker')
+    parser.add_argument('--compile-checker', action='store_true', help='Deprecated: Compile Checker')
     parser.add_argument('--only-html', action='store_true', help='HTML generator Mode')
 
     opts = parser.parse_args(args)
@@ -617,21 +565,20 @@ def main(args: List[str]):
         raise ValueError('only one of --dev and --test can be used')
 
     if opts.compile_checker:
-        logger.warning(
-            '--compile-checker is deprecated. Checker is compiled in default')
+        logger.warning('--compile-checker is deprecated. Checker is compiled in default')
 
-    libdir = Path(__file__).parent
-    problems = list()  # type: List[Problem]
+    rootdir: Path = Path(__file__).parent
+    problems: List[Problem] = list()
 
     for tomlpath in opts.toml:
         tomlfile = toml.load(opts.toml)
-        problems.append(Problem(libdir, Path(tomlpath).parent))
+        problems.append(Problem(rootdir, Path(tomlpath).parent))
 
     for problem_name in opts.problem:
-        problem_dir = find_problem_dir(libdir, problem_name)
+        problem_dir = find_problem_dir(rootdir, problem_name)
         if problem_dir is None:
             raise ValueError('Cannot find problem: {}'.format(problem_name))
-        problems.append(Problem(libdir, problem_dir))
+        problems.append(Problem(rootdir, problem_dir))
 
     if len(problems) == 0:
         logger.warning('No problems')
