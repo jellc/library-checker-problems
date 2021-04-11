@@ -20,6 +20,8 @@ import toml
 
 from problem import Problem, find_problem_dir
 
+logger: Logger = getLogger(__name__)
+
 CASENAME_LEN_LIMIT = 40
 
 
